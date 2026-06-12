@@ -51,6 +51,12 @@ export default function AdminDashboard() {
   const [resolutionReply, setResolutionReply] = useState('');
   const [resolutionScore, setResolutionScore] = useState<number | ''>('');
 
+  // Report Edit Form
+  const [editingReportRow, setEditingReportRow] = useState<any | null>(null);
+  const [editReportConfirmed, setEditReportConfirmed] = useState<number | ''>('');
+  const [editReportPending, setEditReportPending] = useState<number | ''>('');
+  const [editReportDisputed, setEditReportDisputed] = useState<number | ''>('');
+
   // Status/Alert
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -464,6 +470,80 @@ export default function AdminDashboard() {
     reader.readAsText(file, 'UTF-8');
   };
 
+  const handleEditReportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminUser || !editingReportRow) return;
+
+    try {
+      setLoading(true);
+      const res = await fetch('/api/admin/reports', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vjId: editingReportRow.vjId,
+          teamId: editingReportRow.teamId,
+          confirmed: Number(editReportConfirmed) || 0,
+          pending: Number(editReportPending) || 0,
+          disputed: Number(editReportDisputed) || 0,
+          startDate: settings.vj_date_range_start,
+          endDate: settings.vj_date_range_end,
+          adminId: adminUser.id
+        })
+      });
+
+      if (res.ok) {
+        showNotification('แก้ไขข้อมูลคะแนนประจำรอบสำเร็จ');
+        setEditingReportRow(null);
+        fetchData();
+      } else {
+        const data = await res.json();
+        showNotification(data.error || 'เกิดข้อผิดพลาดในการแก้ไขคะแนน', false);
+      }
+    } catch (err) {
+      showNotification('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteReport = async (row: any) => {
+    if (!adminUser || !row) return;
+
+    const confirmDel = window.confirm(
+      `คุณต้องการลบคะแนนทั้งหมดของ VJ "${row.name}" ในรอบบิลนี้ (${settings.vj_date_range_start} ถึง ${settings.vj_date_range_end}) ใช่หรือไม่?\n` +
+      `การลบจะไม่สามารถกู้คืนได้`
+    );
+
+    if (!confirmDel) return;
+
+    try {
+      setLoading(true);
+      const queryParams = new URLSearchParams({
+        vjId: row.vjId,
+        teamId: row.teamId,
+        startDate: settings.vj_date_range_start,
+        endDate: settings.vj_date_range_end,
+        adminId: adminUser.id
+      });
+
+      const res = await fetch(`/api/admin/reports?${queryParams.toString()}`, {
+        method: 'DELETE'
+      });
+
+      if (res.ok) {
+        showNotification('ลบข้อมูลคะแนนประจำรอบสำเร็จ');
+        fetchData();
+      } else {
+        const data = await res.json();
+        showNotification(data.error || 'เกิดข้อผิดพลาดในการลบคะแนน', false);
+      }
+    } catch (err) {
+      showNotification('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // -- Executive Dashboard Statistics --
   
   const teamsList = Array.isArray(teams) ? teams : [];
@@ -512,6 +592,8 @@ export default function AdminDashboard() {
 
     if (!reportsDataMap[vjId]) {
       reportsDataMap[vjId] = {
+        vjId,
+        teamId: s.team_id,
         name: vjName,
         teamName,
         confirmed: 0,
@@ -1331,6 +1413,55 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
+                {editingReportRow && (
+                  <div className="glass-panel" style={{ background: 'rgba(30, 41, 59, 0.6)', marginBottom: '1.5rem', border: '1px solid var(--primary)' }}>
+                    <h4 style={{ margin: 0, color: 'var(--primary)', marginBottom: '1rem' }}>
+                      แก้ไขสรุปคะแนนประจำรอบ: {editingReportRow.name} ({editingReportRow.teamName})
+                    </h4>
+                    <form onSubmit={handleEditReportSubmit}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" style={{ fontSize: '0.75rem' }}>ยอดที่ปิดรอบเสร็จสิ้น (Confirmed)</label>
+                          <input 
+                            type="number" 
+                            className="form-input" 
+                            value={editReportConfirmed}
+                            onChange={(e) => setEditReportConfirmed(e.target.value !== '' ? Number(e.target.value) : '')}
+                            required
+                            onWheel={(e) => e.currentTarget.blur()}
+                          />
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" style={{ fontSize: '0.75rem' }}>ยอดรอยืนยัน (Pending)</label>
+                          <input 
+                            type="number" 
+                            className="form-input" 
+                            value={editReportPending}
+                            onChange={(e) => setEditReportPending(e.target.value !== '' ? Number(e.target.value) : '')}
+                            required
+                            onWheel={(e) => e.currentTarget.blur()}
+                          />
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" style={{ fontSize: '0.75rem' }}>ยอดติดโต้แย้ง (Disputed)</label>
+                          <input 
+                            type="number" 
+                            className="form-input" 
+                            value={editReportDisputed}
+                            onChange={(e) => setEditReportDisputed(e.target.value !== '' ? Number(e.target.value) : '')}
+                            required
+                            onWheel={(e) => e.currentTarget.blur()}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                        <button type="button" className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={() => setEditingReportRow(null)}>ยกเลิก</button>
+                        <button type="submit" className="btn btn-primary" style={{ padding: '0.5rem 1.5rem' }}>บันทึกการแก้ไข</button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+
                 <div className="table-container">
                   <table className="data-table">
                     <thead>
@@ -1341,11 +1472,12 @@ export default function AdminDashboard() {
                         <th>ยอดรอยืนยัน (Pending)</th>
                         <th>ยอดติดโต้แย้ง (Disputed)</th>
                         <th style={{ fontWeight: 700 }}>ยอดรวมชั่วคราว</th>
+                        <th style={{ textAlign: 'center' }}>การจัดการ</th>
                       </tr>
                     </thead>
                     <tbody>
                       {reportsData.length === 0 ? (
-                        <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem' }}>ไม่มีรายการสำหรับนำมาคำนวณรายงาน</td></tr>
+                        <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>ไม่มีรายการสำหรับนำมาคำนวณรายงาน</td></tr>
                       ) : (
                         reportsData.map((row: any, i) => (
                           <tr key={i}>
@@ -1355,6 +1487,29 @@ export default function AdminDashboard() {
                             <td style={{ color: '#fbbf24' }}>{row.pending.toLocaleString()}</td>
                             <td style={{ color: '#f87171' }}>{row.disputed.toLocaleString()}</td>
                             <td style={{ fontWeight: 700, color: 'var(--primary)' }}>{row.total.toLocaleString()}</td>
+                            <td style={{ textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'center' }}>
+                                <button 
+                                  className="btn btn-secondary" 
+                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                                  onClick={() => {
+                                    setEditingReportRow(row);
+                                    setEditReportConfirmed(row.confirmed);
+                                    setEditReportPending(row.pending);
+                                    setEditReportDisputed(row.disputed);
+                                  }}
+                                >
+                                  แก้ไข
+                                </button>
+                                <button 
+                                  className="btn btn-secondary" 
+                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', color: '#ef4444' }}
+                                  onClick={() => handleDeleteReport(row)}
+                                >
+                                  ลบ
+                                </button>
+                              </div>
+                            </td>
                           </tr>
                         ))
                       )}

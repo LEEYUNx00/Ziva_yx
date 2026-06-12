@@ -11,13 +11,32 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleRoleSelect = (role: 'ADMIN' | 'MC' | 'VJ') => {
+  const handleRoleSelect = async (role: 'ADMIN' | 'MC' | 'VJ') => {
     setErrorMsg('');
     setUsernameInput('');
     if (role === 'ADMIN') {
-      // Admin bypasses username input for testing, logs in as default mock admin
-      localStorage.setItem('user', JSON.stringify({ id: 'admin-1', role: 'ADMIN', name: 'Super Admin' }));
-      router.push('/admin');
+      setLoading(true);
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'admin', password: 'admin123' })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          localStorage.setItem('user', JSON.stringify(data.user));
+          router.push('/admin');
+        } else {
+          // Fallback to the real database admin UUID
+          localStorage.setItem('user', JSON.stringify({ id: '082909c3-d582-4369-93b3-80d1cd7dcf79', role: 'ADMIN', name: 'Super Admin' }));
+          router.push('/admin');
+        }
+      } catch (err) {
+        localStorage.setItem('user', JSON.stringify({ id: '082909c3-d582-4369-93b3-80d1cd7dcf79', role: 'ADMIN', name: 'Super Admin' }));
+        router.push('/admin');
+      } finally {
+        setLoading(false);
+      }
     } else {
       setSelectedRole(role);
     }

@@ -3,6 +3,21 @@ import { supabase, logActionSupabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
 
+async function resolveAdminId(adminId: string): Promise<string> {
+  if (adminId === 'admin-1') {
+    const { data: adminUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('role', 'ADMIN')
+      .limit(1)
+      .maybeSingle();
+    if (adminUser) {
+      return adminUser.id;
+    }
+  }
+  return adminId;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -11,6 +26,8 @@ export async function POST(req: Request) {
     if (!rows || !Array.isArray(rows) || !startDate || !endDate || !adminId) {
       return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
     }
+
+    const activeAdminId = await resolveAdminId(adminId);
 
     let newUsersCount = 0;
     
@@ -121,7 +138,7 @@ export async function POST(req: Request) {
           id: crypto.randomUUID(),
           date: endDate,
           vj_id: vjId,
-          mc_id: adminId,
+          mc_id: activeAdminId,
           team_id: teamId,
           score: Math.round(confirmed),
           status: 'confirmed'
@@ -134,7 +151,7 @@ export async function POST(req: Request) {
           id: crypto.randomUUID(),
           date: endDate,
           vj_id: vjId,
-          mc_id: adminId,
+          mc_id: activeAdminId,
           team_id: teamId,
           score: Math.round(pending),
           status: 'pending'
@@ -147,7 +164,7 @@ export async function POST(req: Request) {
           id: crypto.randomUUID(),
           date: endDate,
           vj_id: vjId,
-          mc_id: adminId,
+          mc_id: activeAdminId,
           team_id: teamId,
           score: Math.round(disputed),
           status: 'disputed'
@@ -186,7 +203,7 @@ export async function POST(req: Request) {
           date: endDate,
           team_id: teamId,
           tiktok_total: Math.round(total),
-          mc_id: adminId
+          mc_id: activeAdminId
         }]);
 
       if (summaryInsertError) throw summaryInsertError;
@@ -194,7 +211,7 @@ export async function POST(req: Request) {
 
     // 3. Log action
     await logActionSupabase(
-      adminId,
+      activeAdminId,
       'IMPORT_REPORT',
       `Imported billing cycle report for ${startDate} to ${endDate}. Created ${newUsersCount} VJs.`
     );
