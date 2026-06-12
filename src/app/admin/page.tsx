@@ -57,6 +57,9 @@ export default function AdminDashboard() {
   const [editReportPending, setEditReportPending] = useState<number | ''>('');
   const [editReportDisputed, setEditReportDisputed] = useState<number | ''>('');
 
+  // CSV Preview
+  const [csvPreviewData, setCsvPreviewData] = useState<any | null>(null);
+
   // Status/Alert
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -429,45 +432,105 @@ export default function AdminDashboard() {
         return;
       }
 
-      const confirmImport = window.confirm(
-        `คุณต้องการนำเข้าข้อมูลคะแนน VJ ทั้งหมด ${rows.length} รายการใช่หรือไม่?\n` +
-        `ข้อมูลคะแนนของ VJ เหล่านี้ในรอบวันที่ ${settings.vj_date_range_start} ถึง ${settings.vj_date_range_end} จะถูกเขียนทับด้วยคะแนนชุดนี้`
-      );
+      // Compute Preview:
+      const newVJs: any[] = [];
+      const updatedVJs: any[] = [];
+      const unchangedVJs: any[] = [];
 
-      if (!confirmImport) {
-        fileInput.value = '';
-        return;
-      }
+      rows.forEach(imported => {
+        // Find existing VJ in reportsData
+        const existing = reportsData.find(
+          (r: any) => r.name.trim().toLowerCase() === imported.name.trim().toLowerCase()
+        );
 
-      setLoading(true);
-      try {
-        const res = await fetch('/api/admin/reports/import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            rows,
-            startDate: settings.vj_date_range_start,
-            endDate: settings.vj_date_range_end,
-            adminId: adminUser.id
-          })
-        });
-
-        const data = await res.json();
-        if (res.ok) {
-          showNotification(`นำเข้าข้อมูลและบันทึกคะแนนรอบบิลเรียบร้อยแล้ว! (มีผู้ใช้ใหม่ถูกสร้างขึ้น: ${data.newUsersCount || 0} คน)`);
-          fetchData();
+        if (!existing) {
+          newVJs.push({
+            name: imported.name,
+            teamName: imported.teamName,
+            confirmed: imported.confirmed,
+            pending: imported.pending,
+            disputed: imported.disputed,
+            total: imported.total
+          });
         } else {
-          showNotification(data.error || 'เกิดข้อผิดพลาดในการนำเข้าข้อมูล', false);
+          const isChanged =
+            existing.confirmed !== imported.confirmed ||
+            existing.pending !== imported.pending ||
+            existing.disputed !== imported.disputed;
+
+          if (isChanged) {
+            updatedVJs.push({
+              name: existing.name,
+              teamName: existing.teamName,
+              old: {
+                confirmed: existing.confirmed,
+                pending: existing.pending,
+                disputed: existing.disputed,
+                total: existing.total
+              },
+              new: {
+                confirmed: imported.confirmed,
+                pending: imported.pending,
+                disputed: imported.disputed,
+                total: imported.total
+              }
+            });
+          } else {
+            unchangedVJs.push({
+              name: existing.name,
+              teamName: existing.teamName,
+              confirmed: imported.confirmed,
+              pending: imported.pending,
+              disputed: imported.disputed,
+              total: imported.total
+            });
+          }
         }
-      } catch (err) {
-        showNotification('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', false);
-      } finally {
-        setLoading(false);
-        fileInput.value = '';
-      }
+      });
+
+      setCsvPreviewData({
+        totalRows: rows.length,
+        newVJs,
+        updatedVJs,
+        unchangedVJs,
+        rowsToImport: rows
+      });
+
+      fileInput.value = '';
     };
 
     reader.readAsText(file, 'UTF-8');
+  };
+
+  const handleConfirmImport = async () => {
+    if (!adminUser || !csvPreviewData) return;
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/reports/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: csvPreviewData.rowsToImport,
+          startDate: settings.vj_date_range_start,
+          endDate: settings.vj_date_range_end,
+          adminId: adminUser.id
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        showNotification(`นำเข้าข้อมูลและบันทึกคะแนนรอบบิลเรียบร้อยแล้ว! (มีผู้ใช้ใหม่ถูกสร้างขึ้น: ${data.newUsersCount || 0} คน)`);
+        setCsvPreviewData(null);
+        fetchData();
+      } else {
+        showNotification(data.error || 'เกิดข้อผิดพลาดในการนำเข้าข้อมูล', false);
+      }
+    } catch (err) {
+      showNotification('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', false);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleEditReportSubmit = async (e: React.FormEvent) => {
@@ -1603,6 +1666,153 @@ export default function AdminDashboard() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* CSV Import Preview Modal */}
+        {csvPreviewData && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.85)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '1rem'
+          }}>
+            <div className="glass-panel" style={{
+              width: '100%',
+              maxWidth: '800px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: '2.5rem',
+              borderRadius: 'var(--radius-lg)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(30, 41, 59, 0.95)',
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1.5rem'
+            }}>
+              <div>
+                <h2 style={{ color: 'var(--primary)', marginBottom: '0.5rem', fontSize: '1.5rem', fontWeight: 700 }}>
+                  🔍 ตรวจสอบและพรีวิวข้อมูลนำเข้า (CSV Preview)
+                </h2>
+                <p style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
+                  ระบบตรวจสอบข้อมูลที่อัปโหลดเทียบกับฐานข้อมูลปัจจุบัน พบสรุปการเปลี่ยนแปลงดังนี้
+                </p>
+              </div>
+
+              {/* Summary Statistics Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                <div style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '1rem', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>จำนวนรายการทั้งหมด</div>
+                  <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#60a5fa', marginTop: '0.25rem' }}>{csvPreviewData.totalRows}</div>
+                </div>
+                <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '1rem', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>สร้าง VJ ใหม่</div>
+                  <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#34d399', marginTop: '0.25rem' }}>{csvPreviewData.newVJs.length}</div>
+                </div>
+                <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '1rem', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>อัพเดทยอด/ปรับเปลี่ยน</div>
+                  <div style={{ fontSize: '1.75rem', fontWeight: 700, color: '#fbbf24', marginTop: '0.25rem' }}>{csvPreviewData.updatedVJs.length}</div>
+                </div>
+              </div>
+
+              {/* Detailed Lists */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxHeight: '40vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
+                
+                {/* Section 1: New VJs */}
+                {csvPreviewData.newVJs.length > 0 && (
+                  <div style={{ background: 'rgba(16, 185, 129, 0.03)', border: '1px solid rgba(16, 185, 129, 0.1)', padding: '1.25rem', borderRadius: 'var(--radius-md)' }}>
+                    <h4 style={{ color: '#34d399', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      🆕 รายชื่อ VJ ใหม่ที่จะถูกสร้างเข้าระบบ ({csvPreviewData.newVJs.length})
+                    </h4>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                      {csvPreviewData.newVJs.map((vj: any, idx: number) => (
+                        <span key={idx} className="badge" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#34d399', fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}>
+                          {vj.name} ({vj.teamName}) - ยอดรวม: {vj.total.toLocaleString()}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Section 2: Updated VJs */}
+                {csvPreviewData.updatedVJs.length > 0 && (
+                  <div style={{ background: 'rgba(245, 158, 11, 0.03)', border: '1px solid rgba(245, 158, 11, 0.1)', padding: '1.25rem', borderRadius: 'var(--radius-md)' }}>
+                    <h4 style={{ color: '#fbbf24', fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+                      ✏️ รายการที่มีการปรับเปลี่ยนยอด/แก้ไขคะแนน ({csvPreviewData.updatedVJs.length})
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      {csvPreviewData.updatedVJs.map((item: any, idx: number) => (
+                        <div key={idx} style={{ background: 'rgba(255, 255, 255, 0.02)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid #fbbf24', fontSize: '0.875rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem', fontWeight: 600 }}>
+                            <span style={{ color: '#f8fafc' }}>{item.name} ({item.teamName})</span>
+                            <span style={{ color: '#94a3b8' }}>ยอดรวมเดิม: {item.old.total.toLocaleString()} → ยอดรวมใหม่: {item.new.total.toLocaleString()}</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', color: '#cbd5e1', fontSize: '0.8rem' }}>
+                            <div>
+                              <span style={{ color: '#ef4444' }}>ยอดเดิม:</span>
+                              <br />
+                              Confirmed: {item.old.confirmed.toLocaleString()} | Pending: {item.old.pending.toLocaleString()} | Disputed: {item.old.disputed.toLocaleString()}
+                            </div>
+                            <div>
+                              <span style={{ color: '#10b981' }}>ยอดใหม่:</span>
+                              <br />
+                              Confirmed: {item.new.confirmed.toLocaleString()} | Pending: {item.new.pending.toLocaleString()} | Disputed: {item.new.disputed.toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Section 3: Unchanged VJs */}
+                {csvPreviewData.unchangedVJs.length > 0 && (
+                  <div style={{ background: 'rgba(255, 255, 255, 0.01)', border: '1px solid rgba(255, 255, 255, 0.05)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
+                    <details>
+                      <summary style={{ color: '#94a3b8', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 500 }}>
+                        📋 รายการที่ข้อมูลตรงกัน/ไม่มีการเปลี่ยนแปลง ({csvPreviewData.unchangedVJs.length} รายการ)
+                      </summary>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.75rem' }}>
+                        {csvPreviewData.unchangedVJs.map((vj: any, idx: number) => (
+                          <span key={idx} style={{ color: '#64748b', fontSize: '0.75rem', background: 'rgba(255,255,255,0.03)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
+                            {vj.name} ({vj.total.toLocaleString()})
+                          </span>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                )}
+
+              </div>
+
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '1.25rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                <button 
+                  onClick={() => setCsvPreviewData(null)}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.6rem 1.5rem', fontSize: '0.9rem' }}
+                  disabled={loading}
+                >
+                  ยกเลิก
+                </button>
+                <button 
+                  onClick={handleConfirmImport}
+                  className="btn btn-primary"
+                  style={{ padding: '0.6rem 1.8rem', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                  disabled={loading}
+                >
+                  {loading ? 'กำลังนำเข้าข้อมูล...' : 'ยืนยันการนำเข้าข้อมูล'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>

@@ -141,7 +141,8 @@ export async function POST(req: Request) {
           mc_id: activeAdminId,
           team_id: teamId,
           score: Math.round(confirmed),
-          status: 'confirmed'
+          status: 'confirmed',
+          submitted_at: new Date().toISOString()
         });
         totalVjScore += confirmed;
       }
@@ -154,7 +155,8 @@ export async function POST(req: Request) {
           mc_id: activeAdminId,
           team_id: teamId,
           score: Math.round(pending),
-          status: 'pending'
+          status: 'pending',
+          submitted_at: new Date().toISOString()
         });
         totalVjScore += pending;
       }
@@ -167,7 +169,8 @@ export async function POST(req: Request) {
           mc_id: activeAdminId,
           team_id: teamId,
           score: Math.round(disputed),
-          status: 'disputed'
+          status: 'disputed',
+          submitted_at: new Date().toISOString()
         });
         totalVjScore += disputed;
       }
