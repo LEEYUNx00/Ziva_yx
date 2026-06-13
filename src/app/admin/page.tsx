@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { format, differenceInHours, parseISO } from 'date-fns';
 
-type Tab = 'exec' | 'teams' | 'users' | 'settings' | 'disputes' | 'reports' | 'logs';
+type Tab = 'exec' | 'teams' | 'users' | 'settings' | 'disputes' | 'reports' | 'logs' | 'holidays';
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('exec');
@@ -20,6 +20,21 @@ export default function AdminDashboard() {
   const [allScores, setAllScores] = useState<any[]>([]);
   const [dailySummaries, setDailySummaries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // VJ Resignation States
+  const [vjStatusData, setVjStatusData] = useState<Record<string, any>>({});
+  const [vjEmploymentStatus, setVjEmploymentStatus] = useState<string>('ACTIVE');
+  const [vjResignationDate, setVjResignationDate] = useState<string>('');
+  const [vjIncludeScoresInTeam, setVjIncludeScoresInTeam] = useState<boolean>(true);
+
+  // Holiday States
+  const [holidayData, setHolidayData] = useState<any>({ team_holidays: [], individual_holidays: [] });
+  // Holiday Form States
+  const [holidayType, setHolidayType] = useState<'TEAM' | 'INDIVIDUAL'>('TEAM');
+  const [holidayTeamId, setHolidayTeamId] = useState<string>('');
+  const [holidayUserId, setHolidayUserId] = useState<string>('');
+  const [holidayDate, setHolidayDate] = useState<string>('');
+  const [holidayNote, setHolidayNote] = useState<string>('');
 
   // Form states
   const [adminUser, setAdminUser] = useState<any>(null);
@@ -109,6 +124,24 @@ export default function AdminDashboard() {
 
       if (settingsData && !settingsData.error) {
         setSettings(settingsData);
+        if (settingsData.vj_status_data) {
+          try {
+            setVjStatusData(JSON.parse(settingsData.vj_status_data));
+          } catch(e) {
+            console.error('Error parsing vj_status_data', e);
+          }
+        } else {
+          setVjStatusData({});
+        }
+        if (settingsData.holiday_data) {
+          try {
+            setHolidayData(JSON.parse(settingsData.holiday_data));
+          } catch(e) {
+            console.error('Error parsing holiday_data', e);
+          }
+        } else {
+          setHolidayData({ team_holidays: [], individual_holidays: [] });
+        }
       }
 
       if (Array.isArray(logsData)) {
@@ -222,6 +255,32 @@ export default function AdminDashboard() {
       });
 
       if (res.ok) {
+        const data = await res.json();
+        const userId = isEdit ? editingUserId : data.user?.id;
+        
+        if (userId) {
+          const updatedVjStatusData = { ...vjStatusData };
+          if (userRole === 'VJ') {
+            updatedVjStatusData[userId] = {
+              status: vjEmploymentStatus,
+              resignationDate: vjEmploymentStatus === 'RESIGNED' ? vjResignationDate : '',
+              includeScoresInTeam: vjIncludeScoresInTeam
+            };
+          } else {
+            delete updatedVjStatusData[userId];
+          }
+
+          // Save settings API call
+          await fetch('/api/admin/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              vj_status_data: JSON.stringify(updatedVjStatusData),
+              adminId: adminUser.id
+            })
+          });
+        }
+
         showNotification(isEdit ? `แก้ไขข้อมูลผู้ใช้ ${userName} สำเร็จ` : `สร้างบัญชีผู้ใช้ ${userName} สำเร็จ`);
         setUserUsername('');
         setUserPassword('');
@@ -229,6 +288,9 @@ export default function AdminDashboard() {
         setUserRole('VJ');
         setUserTeamId('');
         setEditingUserId(null);
+        setVjEmploymentStatus('ACTIVE');
+        setVjResignationDate('');
+        setVjIncludeScoresInTeam(true);
         fetchData();
       } else {
         const err = await res.json();
@@ -248,6 +310,18 @@ export default function AdminDashboard() {
       });
 
       if (res.ok) {
+        // Clean up vj status data key
+        const updatedVjStatusData = { ...vjStatusData };
+        delete updatedVjStatusData[userId];
+        await fetch('/api/admin/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vj_status_data: JSON.stringify(updatedVjStatusData),
+            adminId: adminUser.id
+          })
+        });
+
         showNotification(`ลบผู้ใช้ ${name} สำเร็จ`);
         fetchData();
       } else {
@@ -256,6 +330,125 @@ export default function AdminDashboard() {
       }
     } catch (err) {
       showNotification('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', false);
+    }
+  };
+
+  // Holiday CRUD
+  const handleAddHoliday = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminUser || !holidayDate || !holidayNote.trim()) return;
+
+    const updatedHolidayData = { ...holidayData };
+    if (!updatedHolidayData.team_holidays) updatedHolidayData.team_holidays = [];
+    if (!updatedHolidayData.individual_holidays) updatedHolidayData.individual_holidays = [];
+
+    if (holidayType === 'TEAM') {
+      if (!holidayTeamId) {
+        showNotification('กรุณาเลือกทีม', false);
+        return;
+      }
+      const team = teams.find(t => t.id === holidayTeamId);
+      const isExist = updatedHolidayData.team_holidays.some(
+        (h: any) => h.teamId === holidayTeamId && h.date === holidayDate
+      );
+      if (isExist) {
+        showNotification('มีวันหยุดของทีมนี้ในวันที่เลือกแล้ว', false);
+        return;
+      }
+      updatedHolidayData.team_holidays.push({
+        id: 'th-' + crypto.randomUUID().substring(0, 8),
+        teamId: holidayTeamId,
+        teamName: team?.name || 'ไม่ทราบชื่อทีม',
+        date: holidayDate,
+        note: holidayNote.trim()
+      });
+    } else {
+      if (!holidayUserId) {
+        showNotification('กรุณาเลือก VJ', false);
+        return;
+      }
+      const userObj = allUsers.find(u => u.id === holidayUserId);
+      const isExist = updatedHolidayData.individual_holidays.some(
+        (h: any) => h.userId === holidayUserId && h.date === holidayDate
+      );
+      if (isExist) {
+        showNotification('มีวันหยุดของ VJ คนนี้ในวันที่เลือกแล้ว', false);
+        return;
+      }
+      updatedHolidayData.individual_holidays.push({
+        id: 'ih-' + crypto.randomUUID().substring(0, 8),
+        userId: holidayUserId,
+        userName: userObj?.name || 'ไม่ทราบชื่อ VJ',
+        date: holidayDate,
+        note: holidayNote.trim()
+      });
+    }
+
+    try {
+      setLoading(true);
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          holiday_data: JSON.stringify(updatedHolidayData),
+          adminId: adminUser.id
+        })
+      });
+
+      if (res.ok) {
+        showNotification('บันทึกวันหยุดสำเร็จแล้ว');
+        setHolidayDate('');
+        setHolidayNote('');
+        setHolidayTeamId('');
+        setHolidayUserId('');
+        fetchData();
+      } else {
+        const data = await res.json();
+        showNotification(data.error || 'เกิดข้อผิดพลาดในการบันทึกวันหยุด', false);
+      }
+    } catch (err) {
+      showNotification('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteHoliday = async (type: 'TEAM' | 'INDIVIDUAL', holidayId: string) => {
+    if (!adminUser || !confirm('คุณแน่ใจหรือไม่ว่าต้องการลบวันหยุดนี้?')) return;
+
+    const updatedHolidayData = { ...holidayData };
+    if (type === 'TEAM') {
+      updatedHolidayData.team_holidays = (updatedHolidayData.team_holidays || []).filter(
+        (h: any) => h.id !== holidayId
+      );
+    } else {
+      updatedHolidayData.individual_holidays = (updatedHolidayData.individual_holidays || []).filter(
+        (h: any) => h.id !== holidayId
+      );
+    }
+
+    try {
+      setLoading(true);
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          holiday_data: JSON.stringify(updatedHolidayData),
+          adminId: adminUser.id
+        })
+      });
+
+      if (res.ok) {
+        showNotification('ลบวันหยุดสำเร็จแล้ว');
+        fetchData();
+      } else {
+        const data = await res.json();
+        showNotification(data.error || 'เกิดข้อผิดพลาดในการลบวันหยุด', false);
+      }
+    } catch (err) {
+      showNotification('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้', false);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -812,6 +1005,20 @@ export default function AdminDashboard() {
             <FileText size={16} style={{ marginRight: '6px' }} />
             ประวัติการทำงาน (Logs)
           </button>
+          
+          <button 
+            className="btn" 
+            style={{ 
+              background: activeTab === 'holidays' ? 'var(--primary)' : 'transparent',
+              color: '#fff',
+              border: activeTab === 'holidays' ? 'none' : '1px solid transparent',
+              fontSize: '0.875rem'
+            }}
+            onClick={() => setActiveTab('holidays')}
+          >
+            <Calendar size={16} style={{ marginRight: '6px' }} />
+            จัดการวันหยุด (Holidays)
+          </button>
         </div>
 
         {/* Loading Indicator */}
@@ -1297,6 +1504,54 @@ export default function AdminDashboard() {
                       </div>
                     )}
 
+                    {/* VJ Resignation Settings */}
+                    {userRole === 'VJ' && (
+                      <div style={{ border: '1px solid rgba(255, 255, 255, 0.05)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginTop: '1rem', backgroundColor: 'rgba(255,255,255,0.02)' }}>
+                        <h4 style={{ margin: '0 0 0.75rem 0', fontSize: '0.875rem', color: 'var(--primary)' }}>ตั้งค่าสถานะผู้ใช้ (สำหรับ VJ เท่านั้น)</h4>
+                        
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontSize: '0.75rem' }}>สถานะการทำงาน</label>
+                          <select
+                            className="form-input"
+                            value={vjEmploymentStatus}
+                            onChange={(e) => setVjEmploymentStatus(e.target.value)}
+                            style={{ appearance: 'none', backgroundColor: 'rgba(15, 23, 42, 0.8)', fontSize: '0.825rem' }}
+                          >
+                            <option value="ACTIVE">กำลังทำงาน (Active)</option>
+                            <option value="RESIGNED">ลาออกแล้ว (Resigned)</option>
+                          </select>
+                        </div>
+
+                        {vjEmploymentStatus === 'RESIGNED' && (
+                          <>
+                            <div className="form-group">
+                              <label className="form-label" style={{ fontSize: '0.75rem' }}>วันที่ลาออก (มีผลตั้งแต่วันนี้เป็นต้นไป)</label>
+                              <input
+                                type="date"
+                                className="form-input"
+                                value={vjResignationDate}
+                                onChange={(e) => setVjResignationDate(e.target.value)}
+                                style={{ fontSize: '0.825rem' }}
+                              />
+                            </div>
+
+                            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 0 }}>
+                              <input
+                                type="checkbox"
+                                id="includeScoresInTeam"
+                                checked={vjIncludeScoresInTeam}
+                                onChange={(e) => setVjIncludeScoresInTeam(e.target.checked)}
+                                style={{ width: 'auto', margin: 0 }}
+                              />
+                              <label htmlFor="includeScoresInTeam" className="form-label" style={{ fontSize: '0.75rem', marginBottom: 0, cursor: 'pointer' }}>
+                                รวมคะแนนของคนนี้ในยอดรวมทีม? (หลังลาออก)
+                              </label>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+
                     <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem' }}>
                       <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
                         {editingUserId ? 'บันทึกการแก้ไข' : 'สร้างผู้ใช้'}
@@ -1312,6 +1567,9 @@ export default function AdminDashboard() {
                             setUserPassword('');
                             setUserRole('VJ');
                             setUserTeamId('');
+                            setVjEmploymentStatus('ACTIVE');
+                            setVjResignationDate('');
+                            setVjIncludeScoresInTeam(true);
                           }}
                         >
                           ยกเลิก
@@ -1379,13 +1637,14 @@ export default function AdminDashboard() {
                           <th>Username</th>
                           <th>Role</th>
                           <th>สังกัดกลุ่ม/ทีม</th>
+                          <th>สถานะการทำงาน</th>
                           <th>การจัดการ</th>
                         </tr>
                       </thead>
                       <tbody>
                         {filteredUsers.length === 0 ? (
                           <tr>
-                            <td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
+                            <td colSpan={6} style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>
                               ไม่พบข้อมูลตามเงื่อนไขที่เลือก
                             </td>
                           </tr>
@@ -1414,6 +1673,25 @@ export default function AdminDashboard() {
                                 )}
                               </td>
                               <td>
+                                {(() => {
+                                  if (u.role !== 'VJ') return <span style={{ color: '#64748b' }}>-</span>;
+                                  const status = vjStatusData[u.id];
+                                  if (status && status.status === 'RESIGNED') {
+                                    return (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', alignItems: 'flex-start' }}>
+                                        <span className="badge badge-danger" style={{ fontSize: '0.75rem' }}>
+                                          ลาออกแล้ว {status.resignationDate ? `(${status.resignationDate})` : ''}
+                                        </span>
+                                        <span style={{ fontSize: '0.7rem', color: status.includeScoresInTeam ? '#34d399' : '#f87171', fontWeight: 600 }}>
+                                          {status.includeScoresInTeam ? '✓ รวมคะแนนในทีม' : '✗ ไม่รวมคะแนนในทีม'}
+                                        </span>
+                                      </div>
+                                    );
+                                  }
+                                  return <span className="badge badge-success" style={{ fontSize: '0.75rem' }}>ทำงานอยู่ (Active)</span>;
+                                })()}
+                              </td>
+                              <td>
                                 <div style={{ display: 'flex', gap: '0.35rem' }}>
                                   <button 
                                     className="btn btn-secondary" 
@@ -1425,6 +1703,16 @@ export default function AdminDashboard() {
                                       setUserPassword('');
                                       setUserRole(u.role || 'VJ');
                                       setUserTeamId(u.teamId || '');
+                                      if (u.role === 'VJ') {
+                                        const statusObj = vjStatusData[u.id] || {};
+                                        setVjEmploymentStatus(statusObj.status || 'ACTIVE');
+                                        setVjResignationDate(statusObj.resignationDate || '');
+                                        setVjIncludeScoresInTeam(statusObj.includeScoresInTeam !== false);
+                                      } else {
+                                        setVjEmploymentStatus('ACTIVE');
+                                        setVjResignationDate('');
+                                        setVjIncludeScoresInTeam(true);
+                                      }
                                     }}
                                   >
                                     แก้ไข
@@ -1663,6 +1951,182 @@ export default function AdminDashboard() {
                       )}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            )}
+
+            {/* H. HOLIDAYS TAB */}
+            {activeTab === 'holidays' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '2rem' }}>
+                {/* Left Column: Form */}
+                <div className="glass-panel" style={{ height: 'fit-content' }}>
+                  <h3>เพิ่มวันหยุดใหม่ (Add Holiday)</h3>
+                  <form onSubmit={handleAddHoliday} style={{ marginTop: '1.25rem' }}>
+                    <div className="form-group">
+                      <label className="form-label">ประเภทวันหยุด</label>
+                      <select
+                        className="form-input"
+                        value={holidayType}
+                        onChange={(e) => setHolidayType(e.target.value as any)}
+                        style={{ appearance: 'none', backgroundColor: 'rgba(15, 23, 42, 0.8)' }}
+                      >
+                        <option value="TEAM">วันหยุดทั้งทีม (Team Holiday)</option>
+                        <option value="INDIVIDUAL">วันหยุดเฉพาะบุคคล (Individual Holiday)</option>
+                      </select>
+                    </div>
+
+                    {holidayType === 'TEAM' ? (
+                      <div className="form-group">
+                        <label className="form-label">เลือกทีม</label>
+                        <select
+                          className="form-input"
+                          value={holidayTeamId}
+                          onChange={(e) => setHolidayTeamId(e.target.value)}
+                          style={{ appearance: 'none', backgroundColor: 'rgba(15, 23, 42, 0.8)' }}
+                          required
+                        >
+                          <option value="" disabled>-- กรุณาเลือกทีม --</option>
+                          {teams.map((t: any) => (
+                            <option key={t.id} value={t.id}>{t.name} ({t.shift})</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="form-group">
+                        <label className="form-label">เลือก VJ</label>
+                        <select
+                          className="form-input"
+                          value={holidayUserId}
+                          onChange={(e) => setHolidayUserId(e.target.value)}
+                          style={{ appearance: 'none', backgroundColor: 'rgba(15, 23, 42, 0.8)' }}
+                          required
+                        >
+                          <option value="" disabled>-- กรุณาเลือก VJ --</option>
+                          {allUsers.filter((u: any) => u.role === 'VJ').map((u: any) => (
+                            <option key={u.id} value={u.id}>{u.name} ({u.username})</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="form-group">
+                      <label className="form-label">วันที่</label>
+                      <input
+                        type="date"
+                        className="form-input"
+                        value={holidayDate}
+                        onChange={(e) => setHolidayDate(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">บันทึก/หมายเหตุ</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="เช่น ลาป่วย, พักผ่อนประจำปี, ลาพักร้อน"
+                        value={holidayNote}
+                        onChange={(e) => setHolidayNote(e.target.value)}
+                        required
+                      />
+                    </div>
+
+                    <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }} disabled={loading}>
+                      {loading ? 'กำลังบันทึก...' : 'บันทึกวันหยุด'}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Right Column: Lists */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                  {/* Team Holidays */}
+                  <div className="glass-panel">
+                    <h3>วันหยุดทีมทั้งหมด (Team Holidays)</h3>
+                    <div className="table-container" style={{ marginTop: '1rem' }}>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>วันที่</th>
+                            <th>ทีม</th>
+                            <th>หมายเหตุ</th>
+                            <th style={{ textAlign: 'center', width: '100px' }}>การจัดการ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(!holidayData.team_holidays || holidayData.team_holidays.length === 0) ? (
+                            <tr>
+                              <td colSpan={4} style={{ textAlign: 'center', padding: '1.5rem', color: '#64748b' }}>
+                                ไม่มีบันทึกวันหยุดทีม
+                              </td>
+                            </tr>
+                          ) : (
+                            holidayData.team_holidays.map((h: any) => (
+                              <tr key={h.id}>
+                                <td style={{ fontWeight: 600 }}>{h.date}</td>
+                                <td style={{ color: 'var(--primary)', fontWeight: 600 }}>{h.teamName}</td>
+                                <td>{h.note}</td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <button
+                                    className="btn btn-danger"
+                                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                                    onClick={() => handleDeleteHoliday('TEAM', h.id)}
+                                    disabled={loading}
+                                  >
+                                    ลบ
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Individual Holidays */}
+                  <div className="glass-panel">
+                    <h3>วันหยุดรายบุคคลทั้งหมด (Individual Holidays)</h3>
+                    <div className="table-container" style={{ marginTop: '1rem' }}>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>วันที่</th>
+                            <th>VJ</th>
+                            <th>หมายเหตุ</th>
+                            <th style={{ textAlign: 'center', width: '100px' }}>การจัดการ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(!holidayData.individual_holidays || holidayData.individual_holidays.length === 0) ? (
+                            <tr>
+                              <td colSpan={4} style={{ textAlign: 'center', padding: '1.5rem', color: '#64748b' }}>
+                                ไม่มีบันทึกวันหยุดรายบุคคล
+                              </td>
+                            </tr>
+                          ) : (
+                            holidayData.individual_holidays.map((h: any) => (
+                              <tr key={h.id}>
+                                <td style={{ fontWeight: 600 }}>{h.date}</td>
+                                <td style={{ color: '#34d399', fontWeight: 600 }}>{h.userName}</td>
+                                <td>{h.note}</td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <button
+                                    className="btn btn-danger"
+                                    style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                                    onClick={() => handleDeleteHoliday('INDIVIDUAL', h.id)}
+                                    disabled={loading}
+                                  >
+                                    ลบ
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

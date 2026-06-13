@@ -27,7 +27,7 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { vj_date_range_start, vj_date_range_end, adminId } = body;
+    const { vj_date_range_start, vj_date_range_end, vj_status_data, holiday_data, adminId } = body;
 
     if (!adminId) {
       return NextResponse.json({ error: 'Missing admin ID' }, { status: 400 });
@@ -39,6 +39,12 @@ export async function POST(req: Request) {
     }
     if (vj_date_range_end) {
       updates.push({ key: 'vj_date_range_end', value: vj_date_range_end });
+    }
+    if (vj_status_data !== undefined) {
+      updates.push({ key: 'vj_status_data', value: vj_status_data });
+    }
+    if (holiday_data !== undefined) {
+      updates.push({ key: 'holiday_data', value: holiday_data });
     }
 
     if (updates.length > 0) {
@@ -52,7 +58,7 @@ export async function POST(req: Request) {
     await logActionSupabase(
       adminId,
       'UPDATE_SETTINGS',
-      `Updated VJ Date Range to ${vj_date_range_start || 'N/A'} - ${vj_date_range_end || 'N/A'}`
+      `Updated system settings/resignation/holiday configurations`
     );
 
     return NextResponse.json({ success: true });

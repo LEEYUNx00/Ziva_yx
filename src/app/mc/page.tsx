@@ -25,6 +25,10 @@ export default function MCDashboard() {
   const [isAddingVj, setIsAddingVj] = useState(false);
   const [addVjError, setAddVjError] = useState('');
 
+  // Resignation and Holiday states
+  const [vjStatusData, setVjStatusData] = useState<Record<string, any>>({});
+  const [holidayData, setHolidayData] = useState<any>({ team_holidays: [], individual_holidays: [] });
+
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user') || '{}');
     if (!userData.id || userData.role !== 'MC') {
@@ -47,11 +51,64 @@ export default function MCDashboard() {
         console.error(err);
         setErrorMsg('ไม่สามารถเชื่อมต่อดึงข้อมูลทีมได้');
       });
+
+    // Fetch Settings for holiday and resignation data
+    fetch(`/api/admin/settings?t=${Date.now()}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.vj_status_data) {
+          try {
+            setVjStatusData(JSON.parse(data.vj_status_data));
+          } catch(e) {
+            console.error('Error parsing vjStatusData in MC Dashboard', e);
+          }
+        }
+        if (data.holiday_data) {
+          try {
+            setHolidayData(JSON.parse(data.holiday_data));
+          } catch(e) {
+            console.error('Error parsing holidayData in MC Dashboard', e);
+          }
+        }
+      })
+      .catch(err => console.error('Error fetching settings on MC page:', err));
   }, [router]);
+
+  // Pre-fill VJ holiday scores with 0 when date/team/holidayData changes
+  useEffect(() => {
+    if (!selectedTeam) return;
+    const newScores: Record<string, number | ''> = {};
+    const team = teamsList.find(t => t.id === selectedTeam);
+    const vjs = (team?.members?.filter((m: any) => m.role === 'VJ') || []).filter((vj: any) => {
+      const status = vjStatusData[vj.id];
+      if (status && status.status === 'RESIGNED') {
+        if (!status.resignationDate) return false;
+        return date < status.resignationDate;
+      }
+      return true;
+    });
+
+    vjs.forEach((vj: any) => {
+      const vjHoliday = (holidayData.individual_holidays || []).find((h: any) => h.userId === vj.id && h.date === date);
+      if (vjHoliday) {
+        newScores[vj.id] = 0;
+      }
+    });
+    setVjScores(newScores);
+  }, [date, selectedTeam, holidayData, teams, vjStatusData]);
 
   const teamsList = Array.isArray(teams) ? teams : [];
   const currentTeam = teamsList.find(t => t.id === selectedTeam);
-  const vjsInTeam = currentTeam?.members?.filter((m: any) => m.role === 'VJ') || [];
+  
+  // Filter out VJs that are Resigned (either completely or on/after their resignation date)
+  const vjsInTeam = (currentTeam?.members?.filter((m: any) => m.role === 'VJ') || []).filter((vj: any) => {
+    const status = vjStatusData[vj.id];
+    if (status && status.status === 'RESIGNED') {
+      if (!status.resignationDate) return false; // resigned completely
+      return date < status.resignationDate; // only show if selected date is before resignation date
+    }
+    return true;
+  });
 
   const isAssignedTeam = (team: any) => {
     if (!user || !team || !team.members) return false;
@@ -244,6 +301,21 @@ export default function MCDashboard() {
               </div>
             )}
 
+            {(() => {
+              const teamHol = (holidayData.team_holidays || []).find((h: any) => h.teamId === selectedTeam && h.date === date);
+              if (teamHol) {
+                return (
+                  <div className="alert" style={{ marginTop: '-1rem', marginBottom: '1.5rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.2)', color: '#60a5fa' }}>
+                    <AlertCircle size={20} />
+                    <div>
+                      <strong>วันหยุดทีม:</strong> วันนี้เป็นวันหยุดของทีม ({teamHol.note || 'ไม่มีบันทึกเพิ่มเติม'})
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             {selectedTeam && (
               <>
                 <div style={{ padding: '1.5rem', background: 'rgba(15, 23, 42, 0.5)', borderRadius: 'var(--radius-md)', marginBottom: '2rem', border: '1px solid var(--border)' }}>
@@ -289,21 +361,31 @@ export default function MCDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {vjsInTeam.map((vj: any) => (
-                        <tr key={vj.id}>
-                          <td>👤 {vj.name}</td>
-                          <td>
-                            <input 
-                              type="number" 
-                              className="form-input" 
-                              placeholder="0"
-                              value={vjScores[vj.id] !== undefined ? vjScores[vj.id] : ''}
-                              onChange={(e) => handleScoreChange(vj.id, e.target.value)}
-                              onWheel={(e) => e.currentTarget.blur()}
-                            />
-                          </td>
-                        </tr>
-                      ))}
+                       {vjsInTeam.map((vj: any) => {
+                        const vjHoliday = (holidayData.individual_holidays || []).find((h: any) => h.userId === vj.id && h.date === date);
+                        return (
+                          <tr key={vj.id}>
+                            <td>
+                              👤 {vj.name}
+                              {vjHoliday && (
+                                <span className="badge badge-success" style={{ marginLeft: '0.5rem', fontSize: '0.7rem', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)' }}>
+                                  💼 วันหยุด ({vjHoliday.note})
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <input 
+                                type="number" 
+                                className="form-input" 
+                                placeholder={vjHoliday ? "0 (วันหยุด)" : "0"}
+                                value={vjScores[vj.id] !== undefined ? vjScores[vj.id] : ''}
+                                onChange={(e) => handleScoreChange(vj.id, e.target.value)}
+                                onWheel={(e) => e.currentTarget.blur()}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {vjsInTeam.length === 0 && (
                         <tr>
                           <td colSpan={2} style={{ textAlign: 'center', padding: '2rem', color: '#64748b' }}>

@@ -17,6 +17,8 @@ export default function VJDashboard() {
   
   // Settings (Date Range)
   const [dateRange, setDateRange] = useState<any>({ start: '', end: '' });
+  const [vjStatusData, setVjStatusData] = useState<Record<string, any>>({});
+  const [holidayData, setHolidayData] = useState<any>({ team_holidays: [], individual_holidays: [] });
 
   // Dispute Modal state
   const [disputingScoreId, setDisputingScoreId] = useState<string | null>(null);
@@ -45,6 +47,20 @@ export default function VJDashboard() {
         start: settingsData.vj_date_range_start || '',
         end: settingsData.vj_date_range_end || ''
       });
+      if (settingsData.vj_status_data) {
+        try {
+          setVjStatusData(JSON.parse(settingsData.vj_status_data));
+        } catch (e) {
+          console.error('Error parsing vj_status_data', e);
+        }
+      }
+      if (settingsData.holiday_data) {
+        try {
+          setHolidayData(JSON.parse(settingsData.holiday_data));
+        } catch (e) {
+          console.error('Error parsing holiday_data', e);
+        }
+      }
 
       // 2. Fetch personal scores
       const scoresRes = await fetch(`/api/scores?vjId=${vjId}&t=${Date.now()}`);
@@ -126,22 +142,50 @@ export default function VJDashboard() {
   const totalScore = personalScoresList.reduce((sum, s) => sum + s.score, 0);
 
   // Calculate team's total monthly score (all members, all dates in current billing cycle)
-  const teamMonthlyTotal = teamScoresList.reduce((sum, s) => sum + s.score, 0);
+  const teamMonthlyTotal = teamScoresList.reduce((sum, s) => {
+    const status = vjStatusData[s.vj_id];
+    if (status && status.status === 'RESIGNED' && status.includeScoresInTeam === false) {
+      if (!status.resignationDate || s.date >= status.resignationDate) {
+        return sum; // Exclude score
+      }
+    }
+    return sum + s.score;
+  }, 0);
 
   // Calculate team's daily total score on a given date
   const getTeamDailyTotal = (dateStr: string) => {
     return teamScoresList
-      .filter((s: any) => s.date === dateStr)
+      .filter((s: any) => {
+        if (s.date !== dateStr) return false;
+        const status = vjStatusData[s.vj_id];
+        if (status && status.status === 'RESIGNED' && status.includeScoresInTeam === false) {
+          if (!status.resignationDate || s.date >= status.resignationDate) {
+            return false; // Exclude score
+          }
+        }
+        return true;
+      })
       .reduce((sum, s) => sum + s.score, 0);
   };
 
   // Group team scores by VJ to create Team Rankings
   const rankings = teamMembersList.map((member: any) => {
-    const memberScores = teamScoresList.filter((s: any) => s.vj_id === member.id);
+    const memberScores = teamScoresList.filter((s: any) => {
+      if (s.vj_id !== member.id) return false;
+      const status = vjStatusData[member.id];
+      if (status && status.status === 'RESIGNED' && status.includeScoresInTeam === false) {
+        if (!status.resignationDate || s.date >= status.resignationDate) {
+          return false; // Exclude score
+        }
+      }
+      return true;
+    });
     const sum = memberScores.reduce((acc, s) => acc + s.score, 0);
+    const status = vjStatusData[member.id];
+    const isResigned = status && status.status === 'RESIGNED';
     return {
       id: member.id,
-      name: member.name,
+      name: member.name + (isResigned ? ' (ลาออก)' : ''),
       totalScore: sum,
       scores: memberScores
     };
@@ -295,7 +339,19 @@ export default function VJDashboard() {
 
                         return (
                           <tr key={score.id}>
-                            <td>{score.date}</td>
+                            <td>
+                              {score.date}
+                              {(() => {
+                                const teamHol = (holidayData.team_holidays || []).find((h: any) => h.teamId === vjTeam?.id && h.date === score.date);
+                                const indHol = (holidayData.individual_holidays || []).find((h: any) => h.userId === user?.id && h.date === score.date);
+                                return (
+                                  <>
+                                    {teamHol && <span className="badge badge-warning" style={{ marginLeft: '0.5rem', fontSize: '0.7rem', backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', border: '1px solid rgba(245,158,11,0.3)' }}>☀️ วันหยุดทีม ({teamHol.note})</span>}
+                                    {indHol && <span className="badge badge-success" style={{ marginLeft: '0.5rem', fontSize: '0.7rem', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#34d399', border: '1px solid rgba(16,185,129,0.3)' }}>💼 วันหยุดส่วนตัว ({indHol.note})</span>}
+                                  </>
+                                );
+                              })()}
+                            </td>
                             <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{score.score.toLocaleString()}</td>
                             <td style={{ fontWeight: 600, color: '#60a5fa' }}>{getTeamDailyTotal(score.date).toLocaleString()}</td>
                             <td>
