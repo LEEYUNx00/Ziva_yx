@@ -612,7 +612,9 @@ export default function AdminDashboard() {
         const line = lines[i].trim();
         if (!line) continue;
 
-        const parts = line.split(',').map(p => p.replace(/^"|"$/g, '').trim());
+        // Support both comma (,) and semicolon (;) as separators for Excel compatibility
+        const separator = line.includes(';') ? ';' : ',';
+        const parts = line.split(separator).map(p => p.replace(/^"|"$/g, '').trim());
         if (parts.length < 6) continue;
 
         const name = parts[0];
