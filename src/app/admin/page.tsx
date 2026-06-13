@@ -592,6 +592,12 @@ export default function AdminDashboard() {
     const file = e.target.files?.[0];
     if (!file || !adminUser) return;
 
+    if (!settings.vj_date_range_start || !settings.vj_date_range_end) {
+      showNotification('กรุณาตั้งค่ารอบเวลาและระบบ (วันที่เริ่มและสิ้นสุดรอบ) ก่อนดำเนินการนำเข้าข้อมูล', false);
+      e.target.value = '';
+      return;
+    }
+
     const fileInput = e.target;
     const reader = new FileReader();
 
@@ -730,6 +736,11 @@ export default function AdminDashboard() {
     e.preventDefault();
     if (!adminUser || !editingReportRow) return;
 
+    if (!settings.vj_date_range_start || !settings.vj_date_range_end) {
+      showNotification('กรุณาตั้งค่ารอบเวลาและระบบ (วันที่เริ่มและสิ้นสุดรอบ) ก่อนดำเนินการแก้ไขคะแนน', false);
+      return;
+    }
+
     try {
       setLoading(true);
       const res = await fetch('/api/admin/reports', {
@@ -764,6 +775,11 @@ export default function AdminDashboard() {
 
   const handleDeleteReport = async (row: any) => {
     if (!adminUser || !row) return;
+
+    if (!settings.vj_date_range_start || !settings.vj_date_range_end) {
+      showNotification('กรุณาตั้งค่ารอบเวลาและระบบ (วันที่เริ่มและสิ้นสุดรอบ) ก่อนดำเนินการลบคะแนน', false);
+      return;
+    }
 
     const confirmDel = window.confirm(
       `คุณต้องการลบคะแนนทั้งหมดของ VJ "${row.name}" ในรอบบิลนี้ (${settings.vj_date_range_start} ถึง ${settings.vj_date_range_end}) ใช่หรือไม่?\n` +
